@@ -36,15 +36,21 @@ jobs:
             rm -rf ComponentFinder/ComponentFinder
           fi
           
-      - name: Create local.properties
+      - name: Fix aapt2 path and SDK config
         run: |
-          echo "sdk.dir=/usr/local/lib/android/sdk" > ComponentFinder/local.properties
+          cd ComponentFinder
+          # 删除任何残留的 aapt2 硬编码
+          sed -i '/aapt2FromMavenOverride/d' gradle.properties 2>/dev/null || true
+          # 强制写入正确的 SDK 路径
+          echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
+          # 验证 build-tools 34.0.0 存在
+          ls /usr/local/lib/android/sdk/build-tools/34.0.0/aapt2
           
       - name: Build with Gradle
         run: |
           cd ComponentFinder
           gradle wrapper --gradle-version 8.7
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
           
       - name: Upload APK
         uses: actions/upload-artifact@v4
