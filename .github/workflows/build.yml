@@ -11,13 +11,22 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
       - name: Unzip project
-        run: unzip ComponentFinder.zip
+        run: |
+          unzip ComponentFinder.zip
+          if [ -d "ComponentFinder/ComponentFinder" ]; then
+            mv ComponentFinder/ComponentFinder/* ComponentFinder/
+            rm -rf ComponentFinder/ComponentFinder
+          fi
       - name: Build with Gradle
-        run: cd ComponentFinder && gradle assembleDebug
+        run: |
+          cd ComponentFinder
+          gradle assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
