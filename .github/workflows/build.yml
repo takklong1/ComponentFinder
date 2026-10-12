@@ -3,6 +3,9 @@ on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
       
@@ -15,7 +18,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          # 安装必要的 build-tools 和 platform
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
           
       - name: Accept Android SDK Licenses
@@ -33,6 +35,10 @@ jobs:
             mv ComponentFinder/ComponentFinder/* ComponentFinder/
             rm -rf ComponentFinder/ComponentFinder
           fi
+          
+      - name: Create local.properties
+        run: |
+          echo "sdk.dir=/usr/local/lib/android/sdk" > ComponentFinder/local.properties
           
       - name: Build with Gradle
         run: |
