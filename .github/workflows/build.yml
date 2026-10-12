@@ -15,6 +15,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
+          # 安装必要的 build-tools 和 platform
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
           
       - name: Accept Android SDK Licenses
