@@ -5,17 +5,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
+          
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools'
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+          
+      - name: Accept Android SDK Licenses
+        run: yes | sdkmanager --licenses
+        
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.7
+          
       - name: Unzip project
         run: |
           unzip ComponentFinder.zip
@@ -23,10 +32,13 @@ jobs:
             mv ComponentFinder/ComponentFinder/* ComponentFinder/
             rm -rf ComponentFinder/ComponentFinder
           fi
+          
       - name: Build with Gradle
         run: |
           cd ComponentFinder
-          gradle assembleDebug
+          gradle wrapper --gradle-version 8.7
+          ./gradlew assembleDebug
+          
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
