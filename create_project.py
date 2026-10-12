@@ -49,8 +49,13 @@ android {
         applicationId = "com.example.componentfinder"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 4
+        versionName = "1.3"
+
+        ndk {
+            abiFilters.clear()
+            abiFilters.add("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -114,7 +119,8 @@ dependencies {
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:excludeFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -124,6 +130,7 @@ dependencies {
         <activity
             android:name=".camera.CameraScanActivity"
             android:screenOrientation="portrait"
+            android:excludeFromRecents="true"
             android:theme="@style/Theme.ComponentFinder" />
 
         <provider
@@ -355,6 +362,13 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isFinishing && !isChangingConfigurations) {
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
+    }
 }
 ''',
 
@@ -580,7 +594,6 @@ object SMDCodeParser {
     }
 
     private fun parseCapacitor(code: String): ComponentSpec? {
-        // 纯三位数字：104 → 100nF
         Regex("^(\\d{3})$").find(code)?.let { m ->
             val value = m.groupValues[1]
             val pf = value.substring(0, 2).toDouble() * Math.pow(10.0, value.substring(2).toInt())
@@ -599,7 +612,6 @@ object SMDCodeParser {
     }
 
     private fun parseResistor(code: String): ComponentSpec? {
-        // 四位数 1001 → 1kΩ
         Regex("^(\\d{4})$").find(code)?.let { m ->
             val value = m.groupValues[1]
             val base = value.substring(0, 3).toDouble()
@@ -617,7 +629,6 @@ object SMDCodeParser {
             )
         }
 
-        // 三位数 103 → 10kΩ
         Regex("^(\\d{3})$").find(code)?.let { m ->
             val value = m.groupValues[1]
             val base = value.substring(0, 2).toDouble()
@@ -635,7 +646,6 @@ object SMDCodeParser {
             )
         }
 
-        // 字母代码 01B → 1kΩ
         Regex("^(\\d{2})([A-Z])$").find(code)?.let { m ->
             val baseCode = m.groupValues[1]
             val multCode = m.groupValues[2]
@@ -700,15 +710,11 @@ import com.example.componentfinder.domain.model.Rule
 
 class ParserEngine(private val rules: List<Rule>) {
 
-    /**
-     * 返回所有可能的解析结果（按优先级排序）
-     */
     fun parseAll(input: String): List<ComponentSpec> {
         val clean = input.trim().uppercase()
             .replace(" ", "").replace("\n", "").replace("\t", "")
         val results = LinkedHashSet<ComponentSpec>()
 
-        // 1. 完整匹配品牌规则
         for (rule in rules) {
             rule.pattern.matchEntire(clean)?.let {
                 results.add(buildSpec(rule, it))
@@ -716,7 +722,6 @@ class ParserEngine(private val rules: List<Rule>) {
         }
         if (results.isNotEmpty()) return results.toList()
 
-        // 2. 从文本中提取候选型号，逐个匹配品牌规则
         for (candidate in extractCandidates(clean)) {
             for (rule in rules) {
                 rule.pattern.matchEntire(candidate)?.let {
@@ -726,18 +731,13 @@ class ParserEngine(private val rules: List<Rule>) {
         }
         if (results.isNotEmpty()) return results.toList()
 
-        // 3. SMD 丝印解析（三位/四位数/字母代码）
         SMDCodeParser.parseAll(clean).forEach { results.add(it) }
 
-        // 4. 通用解析兜底
         GenericParser.parse(clean)?.let { results.add(it) }
 
         return results.toList()
     }
 
-    /**
-     * 兼容旧接口，返回第一个结果
-     */
     fun parse(input: String): ComponentSpec? = parseAll(input).firstOrNull()
 
     private fun buildSpec(rule: Rule, match: MatchResult): ComponentSpec {
@@ -946,7 +946,6 @@ fun rememberCameraPermissionState(): Pair<Boolean, () -> Unit> {
 
 object ModelExtractor {
 
-    // 完整型号的正则
     private val fullModelPatterns = listOf(
         Regex("CC\\d{4}[A-Z]{2}(?:NPO|X7R|X5R)[0-9A-Z]{3}\\d{3}"),
         Regex("RC\\d{4}[A-Z]{2}-?\\d{2}[0-9A-Z]{3,4}"),
@@ -958,25 +957,18 @@ object ModelExtractor {
         Regex("\\d{4}[A-Z]\\d[A-Z]\\d{4}[A-Z0-9]+")
     )
 
-    /**
-     * 从任意文本中提取所有候选型号（增强版）
-     * 优先返回完整型号，其次返回丝印代码
-     */
     fun extractAll(text: String): List<String> {
         val candidates = LinkedHashSet<String>()
         val upper = text.uppercase()
 
-        // 1. 先按行拆分，逐行尝试
         val lines = upper.split(Regex("[\\r\\n]+"))
         for (line in lines) {
             val compact = line.replace(" ", "")
-            // 完整型号
             for (p in fullModelPatterns) {
                 p.find(compact)?.let { candidates.add(it.value) }
             }
         }
 
-        // 2. 如果按行没找到，整段文本再试一次
         if (candidates.isEmpty()) {
             val compact = upper.replace(" ", "").replace("\n", "").replace("\t", "")
             for (p in fullModelPatterns) {
@@ -984,13 +976,10 @@ object ModelExtractor {
             }
         }
 
-        // 3. 提取可能的丝印代码（3-4位数字或字母数字混合）
-        // 只在短行（< 20字符）里提取，避免把长字符串里的数字都抓出来
         if (candidates.isEmpty()) {
             for (line in lines) {
                 val compact = line.replace(" ", "").trim()
                 if (compact.length in 3..5) {
-                    // 3位数 104 / 4位数 1001 / 字母数字 01B
                     if (compact.matches(Regex("^\\d{3,4}$")) ||
                         compact.matches(Regex("^\\d{2}[A-Z]$")) ||
                         compact.matches(Regex("^\\d+[Rr]\\d+$"))) {
@@ -1003,9 +992,6 @@ object ModelExtractor {
         return candidates.toList()
     }
 
-    /**
-     * 兼容旧接口：返回第一个候选
-     */
     fun extract(text: String): String? = extractAll(text).firstOrNull()
 }
 ''',
@@ -1229,7 +1215,6 @@ fun ScanScreen(mode: String, onResult: (String) -> Unit) {
         }
     }
 
-    // 识别到原始文本后，提取候选
     LaunchedEffect(rawText) {
         rawText?.let {
             candidates = ModelExtractor.extractAll(it)
@@ -1273,7 +1258,6 @@ fun ScanScreen(mode: String, onResult: (String) -> Unit) {
             }
         }
 
-        // 识别结果卡片
         if (rawText != null) {
             Surface(
                 modifier = Modifier
@@ -1910,7 +1894,7 @@ fun HomeScreen(
         scanLauncher.launch(intent)
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("元件快查") }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("元件快查 v1.3") }) }) { padding ->
         Column(
             modifier = Modifier
                 .padding(padding).padding(16.dp).fillMaxSize(),
@@ -1964,6 +1948,7 @@ fun HomeScreen(
                     Text("• 01B → 电阻 1kΩ (±1%, 0603)", style = MaterialTheme.typography.bodySmall)
                 }
             }
+            Text("版本 v1.3", style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -2140,60 +2125,102 @@ fun HistoryScreen(onBack: () -> Unit) {
     "app/src/main/java/com/example/componentfinder/ui/converter/UnitConverterScreen.kt": r'''package com.example.componentfinder.ui.converter
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.componentfinder.domain.parser.SMDCodeParser
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UnitConverterScreen(onBack: () -> Unit) {
     var input by remember { mutableStateOf("") }
     var result by remember { mutableStateOf("") }
-    var mode by remember { mutableStateOf("auto") }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("单位换算") },
+                title = { Text("单位换算 / 丝印查询") },
                 navigationIcon = { IconButton(onClick = onBack) { Text("←") } }
             )
         }
     ) { padding ->
         Column(
-            modifier = Modifier.padding(padding).padding(16.dp),
+            modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize()
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
-                label = { Text("输入，如 100nF / 10k / 1u / 0.1uf / 4R7") },
+                label = { Text("输入丝印(104) 或 数值(100nF / 10kΩ)") },
                 modifier = Modifier.fillMaxWidth()
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = mode == "auto", onClick = { mode = "auto" }, label = { Text("自动") })
-                FilterChip(selected = mode == "cap", onClick = { mode = "cap" }, label = { Text("电容") })
-                FilterChip(selected = mode == "res", onClick = { mode = "res" }, label = { Text("电阻") })
-            }
             Button(
-                onClick = {
-                    result = when (mode) {
-                        "cap" -> convertCap(input)
-                        "res" -> convertRes(input)
-                        else -> convertAuto(input)
-                    }
-                },
+                onClick = { result = convertSmart(input) },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("换算") }
 
             if (result.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Text(result, modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        result,
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("💡 示例", style = MaterialTheme.typography.titleSmall)
+                    Text("• 104 → 电容 100nF / 电阻 100kΩ", style = MaterialTheme.typography.bodySmall)
+                    Text("• 1001 → 电阻 1kΩ (E96, ±1%)", style = MaterialTheme.typography.bodySmall)
+                    Text("• 01B → 电阻 1kΩ (E96 代码, 0603)", style = MaterialTheme.typography.bodySmall)
+                    Text("• 100nF → 100000 pF / 0.1 µF", style = MaterialTheme.typography.bodySmall)
+                    Text("• 10kΩ → 10000 Ω / 0.01 MΩ", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
     }
+}
+
+private fun convertSmart(input: String): String {
+    val s = input.trim().replace(" ", "").uppercase()
+    if (s.isEmpty()) return "请输入内容"
+
+    val isSMDCode = s.matches(Regex("^\\d{3,4}$")) ||
+            s.matches(Regex("^\\d{2}[A-Z]$")) ||
+            s.matches(Regex("^\\d+[Rr]\\d+$"))
+
+    if (isSMDCode) {
+        val specs = SMDCodeParser.parseAll(s)
+        if (specs.isNotEmpty()) {
+            val sb = StringBuilder()
+            sb.append("「").append(input).append("」识别为丝印代码：\n\n")
+            specs.forEach { spec ->
+                sb.append("【").append(spec.type).append("】\n")
+                spec.toOrderedList().forEach { (k, v) ->
+                    if (v != "-" && v.isNotEmpty()) sb.append("  ").append(k).append("：").append(v).append("\n")
+                }
+                sb.append("\n")
+            }
+            sb.append("注：\n")
+            sb.append("• 电阻 E24(3位)±5%，E96(4位或代码)±1%\n")
+            sb.append("• 电容 104=100nF 等")
+            return sb.toString().trim()
+        }
+    }
+
+    val capRegex = Regex("([\\d.]+)\\s*(pf|nf|uf|µf|f)", RegexOption.IGNORE_CASE)
+    val resRegex = Regex("([\\d.]+)\\s*(m?[ωΩ]|m?ohm|k|K|M|r|R)", RegexOption.IGNORE_CASE)
+
+    if (capRegex.containsMatchIn(s)) return convertCap(input)
+    if (resRegex.containsMatchIn(s) || s.contains("欧")) return convertRes(input)
+
+    return "无法识别格式。\n示例：\n• 丝印 104 / 1001 / 01B\n• 数值 100nF / 10kΩ / 4R7"
 }
 
 private fun fmt(v: Double): String {
@@ -2201,35 +2228,17 @@ private fun fmt(v: Double): String {
     return if (r == r.toLong().toDouble()) r.toLong().toString() else r.toString()
 }
 
-private fun convertAuto(input: String): String {
-    val s = input.trim().lowercase()
-    return when {
-        s.contains("f") || s.contains("pf") || s.contains("nf") || s.contains("uf") ||
-                s.contains("p") || s.contains("n") || s.contains("u") -> convertCap(input)
-        s.contains("k") || s.contains("m") || s.contains("r") ||
-                s.contains("欧") || s.contains("ω") -> convertRes(input)
-        else -> "无法判断类型，请手动选择电容/电阻"
-    }
-}
-
 private fun convertCap(input: String): String {
-    val m = Regex("([\\d.]+)\\s*(pf|nf|uf|µf|f|p|n|u)", RegexOption.IGNORE_CASE).find(input)
+    val m = Regex("([\\d.]+)\\s*(pf|nf|uf|µf|f)", RegexOption.IGNORE_CASE).find(input)
         ?: return "格式错误，示例：100nF、1uF、0.1uf"
     val v = m.groupValues[1].toDouble()
-    val rawUnit = m.groupValues[2].lowercase().replace("µ", "u")
-    val unit = when (rawUnit) {
-        "p", "pf" -> "pf"
-        "n", "nf" -> "nf"
-        "u", "uf" -> "uf"
-        "f" -> "f"
-        else -> return "未知单位"
-    }
+    val unit = m.groupValues[2].lowercase().replace("µ", "u")
     val pfValue = when (unit) {
         "pf" -> v
         "nf" -> v * 1000
         "uf" -> v * 1_000_000
         "f" -> v * 1_000_000_000_000
-        else -> v
+        else -> return "未知单位"
     }
     return "输入：$input\n" +
             "= ${fmt(pfValue)} pF\n" +
@@ -2239,17 +2248,16 @@ private fun convertCap(input: String): String {
 }
 
 private fun convertRes(input: String): String {
-    val s = input.trim().replace(" ", "")
-    val m = Regex("([\\d.]+)([MmKkΩωRr]?[Ωω]?|[Mm]?[Oo]hm)?", RegexOption.IGNORE_CASE)
-        .find(s) ?: return "格式错误，示例：10kΩ、1M、4R7"
+    val s = input.trim().replace(" ", "").replace("欧", "")
+    val m = Regex("([\\d.]+)(m?[ωΩ]|m?ohm|[kK]|[Mm]|[rR])?", RegexOption.IGNORE_CASE).find(s)
+        ?: return "格式错误，示例：10kΩ、1M、4R7"
     val v = m.groupValues[1].toDoubleOrNull() ?: return "数值格式错误"
-    val rawUnit = m.groupValues[2].lowercase()
-    val ohmValue = when {
-        rawUnit.startsWith("m") && (rawUnit.contains("ω") || rawUnit.contains("ohm")) -> v / 1000
-        rawUnit == "mω" || rawUnit == "mohm" -> v / 1000
-        rawUnit.contains("k") -> v * 1000
-        rawUnit.contains("m") -> v * 1_000_000
-        rawUnit == "r" -> v
+    val rawUnit = m.groupValues[2]
+    val ohmValue = when (rawUnit.lowercase()) {
+        "mω", "mohm" -> v / 1000
+        "k", "kω", "kohm" -> v * 1000
+        "m" -> v * 1_000_000
+        "r" -> v
         else -> v
     }
     return "输入：$input\n" +
